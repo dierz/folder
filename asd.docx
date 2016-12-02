@@ -1,0 +1,299 @@
+﻿#include <ucontext.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <linux/unistd.h>
+#include <sys/syscall.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <string.h>
+#define handle_error(msg) \
+    do { perror(msg); exit(EXIT_FAILURE); } while (0)
+typedef struct thread_s{
+char stack[163840];
+void (*func)();
+int status;
+int id;
+ucontext_t context;
+struct thread_s *next;
+}thread;
+typedef struct queue_s{
+    thread *head;
+    thread *tail;
+    int size;
+}queue;
+//Status:
+//0-Not Determined
+//1-Ready
+//2-Running
+//3-Suspended
+thread *start=NULL;
+int g=0;
+thread *current=NULL;
+queue *q;
+int count=1;
+void yield(thread *thr)
+{
+swapcontext(&thr->context, &start->context);
+}
+void create(thread *thr){
+getcontext(&start->context);
+ if(getcontext(&thr->context) == -1){
+    handle_error("getcontext");}
+    thr->context.uc_stack.ss_sp = thr->stack;
+    thr->context.uc_stack.ss_size = sizeof(thr->stack);
+    thr->context.uc_link = &start->context;
+    makecontext(&thr->context, thr->func, 1, thr);
+    thr->status=1;
+}
+static void func1(thread *t)
+{
+    printf("func1: started\n");
+    for(int i=0;i<10;i++){
+        printf("Processing func1...\n");
+        sleep(1);
+        if(i== 2){i=-1;
+            swapcontext(&t->context,&start->context);
+          }
+    }
+    printf("func1: returning\n");
+    
+    return;
+}
+static void func2(thread *t)
+{
+    printf("func2: started\n");
+    for(int i=0;i<10000000;i++){
+        printf("Processing func2...\n");
+        sleep(1);
+        if(i==2){i=-1;swapcontext(&t->context,&start->context);}
+    }
+    printf("func2: returning\n");
+    return;
+}
+static void func3(thread *t)
+{
+    printf("func3: started\n");
+    for(int i=0;i<5000000;i++){
+        printf("Processing func3...\n");
+        sleep(1);
+        if(i==2){i=-1;swapcontext(&t->context,&start->context);}
+    }
+    printf("func3: returning\n");
+    return;
+}
+static void func4(thread *t){
+
+    printf("func4: started\n");
+    for(int i=0;i<10000;i++){
+        printf("Processing func4...\n");
+        sleep(1);
+        if(i==1){yield(t);}
+        if(i==2){i=-1;swapcontext(&t->context,&start->context);}
+    }
+    printf("func4: returning\n");
+    
+    return;
+}
+static void func5(thread *t)
+{
+    printf("func5: started\n");
+    for(int i=0;i<10000;i++){
+        printf("Processing func5...\n");
+        sleep(1);
+        if(i==5){i=0;swapcontext(&t->context,&start->context);}
+    }
+    printf("func5: returning\n");
+    
+    return;
+}
+void initlist(){
+            
+    thread *sp=malloc(sizeof(thread));
+       sp->id=0;
+       sp->status=0;
+       sp->next=NULL;
+       getcontext(&sp->context);
+       start=sp;
+       start->next=NULL;
+       current=sp;
+          q=malloc(sizeof(queue));
+       q->head=NULL;
+       q->tail=NULL;
+       q->size=0;
+       return;
+     
+}
+void add(void (*funcT)()){
+    
+thread *next=start->next;
+thread *prev=start;
+while(next!=NULL){
+prev=next;
+next=next->next;
+}
+       thread *thr=malloc(sizeof(thread));
+       thr->id=count;
+       thr->status=0;
+       thr->next=NULL;
+       thr->func=funcT;
+       prev->next=thr;
+       count++;
+       current=thr;
+       create(thr);
+           if(q->size==0){q->head=thr;q->tail=thr;}
+    else if(q->size!=0){q->tail=thr;}
+    q->size++;
+    return;
+}
+void run(int n){
+    thread *next=q->head;
+    thread *prev=NULL;
+    int k=0;
+    while(next!=NULL){
+        if(next->id==n){
+            if(next->status==1){next->status=2;}
+            if(next->status==2){
+                swapcontext(&start->context, &next->context);
+                current=next;
+                k=1;
+            }
+            else{g++; return;}
+        }
+        
+        prev=next;
+        next=next->next;
+       
+   }
+   printf("\n");
+    return;
+}
+void stop(int n)
+{
+thread *next=q->head;
+    thread *prev=NULL;
+    while(next!=NULL){
+        if(next->id==n&&next->status!=0){
+        next->status=3;
+        }
+        prev=next;
+        next=next->next;
+    }
+return;
+}
+int delete(int id){
+thread *next=q->head;
+thread *prev=NULL;
+while(next!=NULL){
+if(next->id==id){
+prev->next=next->next;
+free(next);
+q->size--;
+return 1;
+}
+prev=next;
+next=next->next;
+}
+return 0;
+}
+void threadlist(){
+     thread *next=q->head;
+    thread *prev=NULL;
+    while(next!=NULL){
+        printf("id: %d status: %d\n",next->id,next->status);
+        prev=next;
+        next=next->next;
+    }
+return;
+}
+void resume(int n){
+thread *next=q->head;
+    thread *prev=NULL;
+    while(next!=NULL){
+        if(next->id==n&&next->status==3){
+        next->status=2;
+        }
+        prev=next;
+        next=next->next;
+    }
+return;}
+void enqueue(thread *thr){
+    thread *node=NULL;
+    node=thr;
+    if(q->size==0){
+        q->head=node;
+        q->tail=node;
+    }else{
+        q->tail->next=node;
+        q->tail=node;
+    }
+    q->size++;
+}
+thread *dequeue(){
+    if(q->size==0){
+        handle_error("dequeue");
+    }
+    //thread *new=malloc(sizeof(thread));
+    if (!q->head) {
+        return NULL;
+    }
+    thread *new=q->head->next;
+    thread *old=q->head;
+    if(q->size==1){
+        q->tail=NULL;
+        q->size=0;
+        //return old;
+    }
+    q->head=new;
+    q->size--;
+    old->next = NULL;
+    return old;
+}
+    void scheduler(int d){
+        g=d;
+        for(int k=0;k<g;k++){
+            thread *slc=dequeue();
+     
+            if(slc==NULL){handle_error("empty thread list");}
+            enqueue(slc);
+            run(slc->id);
+            
+        
+        }
+}
+
+int main()
+       {
+        int n;
+        thread *ss=malloc(sizeof(thread));
+        do{
+            printf("Select menu:\n1.Initializate thread list\n2.Add func(1-3) thread to list\n3.Run threads\n4.Suspend thread\n5.Resume thread\n6.Delete thread\n7.Test yield\n8.Threadlist\n9.Work for ? tacts\n10.Exit\n11.test_tlist\n");
+            scanf("%d",&n);
+            switch(n){
+            case 1: initlist();break;
+            case 2:{ add(func1);add(func2);add(func3);}break;
+            case 3:{run(1);run(2);run(3);}break;
+            case 4: {int k; scanf("%d",&k);
+                stop(k);
+            }break;
+            case 5: {int k; scanf("%d",&k);
+                resume(k);
+            }break;
+            case 6:{int k; scanf("%d",&k);
+                if(delete(k)==1){printf("Successful\n");}
+                    else{printf("Failed!\n");}
+                }break;
+            case 7:{
+                add(func4);
+            }break;
+            case 8: threadlist();break;
+            case 9:{int k; scanf("%d",&k);
+                scheduler(k);
+            }break;
+            case 10: printf("Exiting program...\n");return 0; break;
+            case 11: printf("%d, %d, %d\n",q->head->id,q->tail->id,q->size);
+            default: break;
+        }}while(n>0);
+        return 0;
+       }
